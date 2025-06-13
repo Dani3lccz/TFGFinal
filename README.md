@@ -3,7 +3,7 @@ A simple LLM wrapper with open-meteo integration, for dev purposes it uses gpt2 
 
 # ¿How to run this?
 1. You need to have docker installed in your computer.
-2. Create .env file in backend folder and configure your Hugging Face token and hash key there (eg. HASHING_KEY=random_secret_key)
+2. Modify .env file in backend folder and configure your Hugging Face token and hash key there (eg. HASHING_KEY=random_secret_key)
 3. Execute command `docker compose up` in  terminal
 4. We should be able to use the web-app as usual
 - localhost:4200
