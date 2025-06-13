@@ -5,5 +5,5 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# Copia todo el contenido de la carpeta backend al contenedor
+# Copies backend folder content into container
 COPY . .

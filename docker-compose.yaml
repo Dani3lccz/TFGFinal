@@ -7,7 +7,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Monta toda la carpeta backend. Esto incluye database/chatbot_data.db
+      # Mounts backend folder. This includes database/chatbot_data.db
       - ./backend:/app
     working_dir: /app
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
