@@ -1,0 +1,31 @@
+<div class="login-container">
+  <mat-card class="login-card">
+    <div class="login-avatar">
+      <mat-icon>person</mat-icon>
+    </div>
+    <h2 class="login-title">Login</h2>
+
+    <mat-form-field appearance="outline" class="login-field">
+      <mat-label>Username</mat-label>
+      <input matInput [(ngModel)]="username" required>
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" class="login-field">
+      <mat-label>Password</mat-label>
+      <input matInput [(ngModel)]="password" type="password" required>
+    </mat-form-field>
+
+    <button mat-raised-button color="primary" class="login-button" (click)="onSubmit()" [disabled]="!username || !password">
+      Access
+    </button>
+
+    <div class="register-link">
+      <span>Register if you haven't yet</span>
+      <a routerLink="/register">Register</a>
+    </div>  
+
+    <div *ngIf="errorMsg" class="login-error">
+      {{ errorMsg }}
+    </div>
+  </mat-card>
+</div>

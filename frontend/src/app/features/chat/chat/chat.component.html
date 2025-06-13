@@ -1,0 +1,38 @@
+<mat-card class="chat-card">
+  <mat-card-title>Chat</mat-card-title>
+  <mat-divider></mat-divider>
+
+  <mat-form-field appearance="outline" class="chat-field">
+    <mat-label>Prompt</mat-label>
+    <textarea matInput [(ngModel)]="prompt" rows="3" required></textarea>
+  </mat-form-field>
+
+  <button mat-raised-button color="primary" class="chat-button" (click)="sendPrompt()" [disabled]="!prompt || loading">
+    Send
+  </button>
+
+  <!-- Loading -->
+  <div *ngIf="loading" class="chat-loading">
+    <mat-progress-spinner mode="indeterminate" diameter="32"></mat-progress-spinner>
+  </div>
+
+  <!-- Error -->
+  <div *ngIf="error" class="chat-error">
+    <mat-icon color="warn">error</mat-icon> {{ error }}
+  </div>
+
+  <mat-card *ngIf="response" class="response-card">
+    <mat-card-subtitle>Bot Response:</mat-card-subtitle>
+    <mat-card-content>{{ response }}</mat-card-content>
+  </mat-card>
+
+  <div class="history-link">
+  <span>Want to see your chat history?</span>
+  <a routerLink="/history">Click here</a>
+  </div>
+
+<div class="top-bar">
+  <button mat-button color="warn" (click)="logout()">Logout</button>
+</div>
+
+</mat-card>

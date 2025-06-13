@@ -1,0 +1,374 @@
+from fastapi import Depends, FastAPI,HTTPException, Security, status,APIRouter
+from pydantic import BaseModel, EmailStr,Field
+from schema import SessionLocal, User, Query
+from datetime import UTC, datetime
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextGenerationPipeline
+from typing import List, Optional
+from fastapi.middleware.cors import CORSMiddleware
+from jose import JWTError, jwt
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm,HTTPAuthorizationCredentials, HTTPBearer
+from datetime import timedelta
+from passlib.context import CryptContext
+from dotenv import load_dotenv
+import re,requests,os
+
+
+
+app = FastAPI()
+
+# Enable CORS for frontend communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:4200"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+#Configure HF Token and Hashing key in .env file
+load_dotenv()
+# Get token from https://huggingface.co/settings/tokens \\ permissions may vary depending on which LLM you want to use.
+HF_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+HASHING_KEY = os.getenv("HASHING_KEY")
+# Encoding algorithm and expiring variable for JWT token duration
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Instances needed for JWT tokens
+security = HTTPBearer()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hashPassword(password: str) -> str:
+    return pwd_context.hash(password)
+
+def isValidPassword(plainPassword: str, hashedPassword: str) -> bool:
+    return pwd_context.verify(plainPassword, hashedPassword)
+
+def getCurrentUserFromDatabaseUsingToken(token: HTTPAuthorizationCredentials = Security(security)):
+    credentialsException = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired token.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token.credentials, HASHING_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentialsException
+        #Grabs the user details from the database
+        session = SessionLocal()
+        user = session.query(User).filter(User.username == username).first()
+        session.close()
+        if user is None:
+            raise credentialsException
+        return user
+    except JWTError:
+        raise credentialsException
+
+def createAccessToken(data: dict, expiresDelta: timedelta = None):
+    toEncode = data.copy()
+    expire = datetime.now(UTC) + (expiresDelta or timedelta(minutes=15))
+    toEncode.update({"exp": expire})
+    return jwt.encode(toEncode, HASHING_KEY, algorithm=ALGORITHM)
+
+def isContainingWeatherQueryKeywords(prompt: str) -> bool:
+    patterns = [
+        r"\bweather\b", r"\btemperature\b", r"\bcold\b", r"\bhot\b", r"\brain\b"
+    ]
+    return any(re.search(pat, prompt.lower()) for pat in patterns)
+
+# Uses values from madrid, can change the url 
+def fetchWeatherData():
+    url = "https://api.open-meteo.com/v1/forecast?latitude=40.41&longitude=-3.7&current_weather=true"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        temp = data["current_weather"]["temperature"]
+        wind = data["current_weather"]["windspeed"]
+        return f"The current temperature in Madrid is {temp}°C with wind at {wind} km/h."
+    except Exception:
+        return "Weather information could not be retrieved."
+
+# Pydantic models
+class PromptRequest(BaseModel):
+    prompt: str = Field(..., example="How do I plan my day?")
+
+class UserRegister(BaseModel):
+    username: str = Field(..., example="daniel")
+    email: EmailStr = Field(..., example="daniel@example.com")
+    password: str = Field(..., example="SuperSecret44")
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    createdAt: str
+
+class RegisterResponse(BaseModel):
+    success: bool
+    message: str
+    user: UserResponse
+
+class GenerateResponse(BaseModel):
+    success: bool
+    username: str
+    prompt: str
+    response: str
+
+class QueryEntry(BaseModel):
+    promptText: str
+    responseText: str
+    timestamp: str
+
+class HistoryResponse(BaseModel):
+    username: str
+    history: List[QueryEntry]
+    message: Optional[str] = None
+
+
+# Load model
+modelName = "distilgpt2"
+tokenizer = AutoTokenizer.from_pretrained(modelName, token=HF_TOKEN)
+model = AutoModelForCausalLM.from_pretrained(modelName, token=HF_TOKEN)
+pipeline = TextGenerationPipeline(model=model, tokenizer=tokenizer)
+
+#------------------------------------------------------------------------
+# ------------------------- ENDPOINTS -----------------------------------
+#------------------------------------------------------------------------
+
+@app.post("/generate",response_model=GenerateResponse,summary="Generate a chatbot response",
+    description="""
+Processes a prompt submitted by a registered user and returns a response generated by the LLM model.  
+Each interaction is stored for later retrieval.
+""",
+    response_description="Response generated successfully.",
+    responses={
+        200: {
+            "description": "Response generated successfully.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "username": "daniel",
+                        "prompt": "What is the capital of France?",
+                        "response": "The capital of France is Paris."
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Prompt is too short or invalid.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "The provided prompt is too short or empty."
+                    }
+                }
+            }
+        }
+    }
+)
+async def generateText(request: PromptRequest, currentUser: User = Depends(getCurrentUserFromDatabaseUsingToken)):
+    prompt = request.prompt.strip()
+    if not prompt or len(prompt) < 5:
+        raise HTTPException(status_code=400, detail="Prompt is too short or empty.")
+
+    try:
+        result = pipeline(prompt, max_length=100, truncation=True, pad_token_id=tokenizer.eos_token_id)
+        generatedText = result[0]['generated_text']
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating response: {str(e)}")
+    
+    # If there is external API calling intent in the prompt, adds it to response
+    if isContainingWeatherQueryKeywords(prompt):
+        generatedText += " " + fetchWeatherData()
+
+    session = SessionLocal()
+    try:
+        newQuery = Query(
+            user_id=currentUser.id,
+            user_input=prompt,
+            bot_response=generatedText
+        )
+        session.add(newQuery)
+        session.commit()
+        return {
+            "success": True,
+            "username": currentUser.username,
+            "prompt": prompt,
+            "response": generatedText
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error saving query: {str(e)}")
+    finally:
+        session.close()
+
+
+@app.post("/register",response_model=RegisterResponse,summary="Register a new user",
+    description="""
+Allows the registration of a new user in the system, as long as the provided username and email are not already registered on an existing account.
+""",
+    response_description="User registered successfully.",
+    responses={
+        200: {
+            "description": "User registered successfully.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "message": "User registered successfully.",
+                        "user": {
+                            "id": 1,
+                            "username": "daniel",
+                            "email": "daniel@example.com",
+                            "createdAt": "2025-05-29T12:34:56+00:00"
+                        }
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Username or email already exists.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "The username or email is already registered."
+                    }
+                }
+            }
+        }
+    }
+)
+def registerUser(data: UserRegister):
+    session = SessionLocal()
+    try:
+        existingUser = session.query(User).filter((User.username == data.username) | (User.email == data.email)).first()
+        if existingUser:
+            raise HTTPException(status_code=409, detail="Username or email already registered.")
+
+        hashedPassword = hashPassword(data.password)
+        newUser = User(
+            username=data.username,
+            email=data.email,
+            password=hashedPassword
+        )
+        session.add(newUser)
+        session.commit()
+        session.refresh(newUser)
+        return {
+            "success": True,
+            "message": "User registered successfully.",
+            "user": {
+                "id": newUser.id,
+                "username": newUser.username,
+                "email": newUser.email,
+                "createdAt": newUser.created_at.isoformat()
+            }
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Registration error: {str(e)}")
+    finally:
+        session.close()
+
+@app.get("/history/", response_model=HistoryResponse, summary="Returns user's query history",
+    description="""
+Returns the complete history of queries and responses associated with a registered user. The history is ordered from the most recent to the oldest.
+""",
+    response_description="Interaction history successfully retrieved.",
+    responses={
+        200: {
+            "description": "History successfully retrieved.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "username": "daniel",
+                        "history": [
+                            {
+                                "queryText": "What is the capital of France?",
+                                "responseText": "The capital of France is Paris.",
+                                "timestamp": "2025-05-29T12:36:00+00:00"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+)
+def getHistory(currentUser: User = Depends(getCurrentUserFromDatabaseUsingToken)):
+    session = SessionLocal()
+    try:
+        records = session.query(Query).filter(Query.user_id == currentUser.id).order_by(Query.timestamp.desc()).all()
+        return {
+            "username": currentUser.username,
+            "history": [
+                {
+                    "promptText": q.user_input,
+                    "responseText": q.bot_response,
+                    "timestamp": q.timestamp.isoformat()
+                }
+                for q in records
+            ],
+            "message": "No previous history found." if not records else None
+        }
+    finally:
+        session.close()
+
+@app.post("/login",summary="Authenticate user and obtain JWT token",
+    description="""
+Allows an authenticated user to obtain a valid JWT token to access protected system resources.
+The registered username and password must be provided.
+
+Data must be sent in `x-www-form-urlencoded` format (as a form).
+
+**Example parameters:**
+
+- **username**: daniel
+- **password**: superSecreto44
+
+**Example usage in Postman or Swagger:**
+username=daniel
+password=superSecreto44
+""",
+    response_description="Access token successfully generated.",
+    responses={
+        200: {
+            "description": "Token successfully generated.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "access_token": "<example_jwt_token>",
+                        "token_type": "bearer"
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Incorrect credentials.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Incorrect credentials"
+                    }
+                }
+            }
+        }
+    }
+)
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Parameters:
+    - **username**: Name of registered user.
+    - **password**: Password of registered user.
+    """
+    session = SessionLocal()
+    try:
+        user = session.query(User).filter(User.username == form_data.username).first()
+        if not user or not isValidPassword(form_data.password, user.password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        token = createAccessToken(data={"sub": user.username})
+        return {"access_token": token, "token_type": "bearer"}
+    finally:
+        session.close()

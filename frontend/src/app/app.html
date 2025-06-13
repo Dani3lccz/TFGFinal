@@ -1,0 +1,22 @@
+<div style="max-width:400px; margin:auto; padding-top:40px;">
+  <h2>Chatbot Académico</h2>
+  <label>
+    Usuario:
+    <input [(ngModel)]="nombreUsuario" placeholder="Introduce tu usuario" required>
+  </label>
+  <br><br>
+  <label>
+    Pregunta:
+    <textarea [(ngModel)]="prompt" placeholder="Escribe tu pregunta..." required></textarea>
+  </label>
+  <br><br>
+  <button (click)="enviarPregunta()" [disabled]="!nombreUsuario || !prompt">Enviar</button>
+  <br><br>
+  <div *ngIf="respuesta">
+    <strong>Respuesta:</strong>
+    <div style="white-space: pre-wrap;">{{respuesta}}</div>
+  </div>
+  <div *ngIf="error" style="color:red;">
+    <strong>Error:</strong> {{error}}
+  </div>
+</div>
