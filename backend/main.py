@@ -94,9 +94,9 @@ class PromptRequest(BaseModel):
     prompt: str = Field(..., example="How do I plan my day?")
 
 class UserRegister(BaseModel):
-    username: str = Field(..., example="daniel")
-    email: EmailStr = Field(..., example="daniel@example.com")
-    password: str = Field(..., example="SuperSecret44")
+    username: str = Field(..., example="testuser")
+    email: EmailStr = Field(..., example="testuser@example.com")
+    password: str = Field(..., example="testuser")
 
 class UserResponse(BaseModel):
     id: int
