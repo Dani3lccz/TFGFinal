@@ -1,7 +1,7 @@
 # LLM Wrapper 
 A simple LLM wrapper with open-meteo integration, for dev purposes it uses gpt2 model, a very lightweight model to test responses, for better quality responses use a bigger and better model.
 
-# ¿How to run this?
+# How to run this?
 1. You need to have docker installed in your computer.
 2. Modify .env file in backend folder and configure your Hugging Face token and hash key there (eg. HASHING_KEY=random_secret_key)
 3. Execute command `docker compose up` in  terminal
